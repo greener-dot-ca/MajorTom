@@ -16,6 +16,9 @@ public enum CertificateDetails {
         notBefore: Date?,
         notAfter: Date?
     ) {
+        #if !os(macOS)
+        return derValidityDates(certificateDER: certificateDER)
+        #else
         guard let certificate = SecCertificateCreateWithData(nil, certificateDER as CFData) else {
             return (nil, nil)
         }
@@ -38,6 +41,42 @@ public enum CertificateDetails {
             date(for: kSecOIDX509V1ValidityNotBefore),
             date(for: kSecOIDX509V1ValidityNotAfter)
         )
+        #endif
+    }
+
+    /// Validity bounds read straight from the certificate's DER, for platforms without
+    /// `SecCertificateCopyValues` (everything but macOS).
+    static func derValidityDates(certificateDER: Data) -> (
+        notBefore: Date?,
+        notAfter: Date?
+    ) {
+        guard var fields = try? DERElement.tbsChildren(ofCertificate: certificateDER) else {
+            return (nil, nil)
+        }
+        // The explicit [0] version is optional; then serial, signature, issuer, validity.
+        if fields.first?.tag == 0xA0 { fields.removeFirst() }
+        guard fields.count > 3,
+              let times = try? fields[3].children(in: certificateDER),
+              times.count == 2 else { return (nil, nil) }
+
+        func date(_ element: DERElement) -> Date? {
+            guard var text = String(data: certificateDER[element.contentRange], encoding: .ascii),
+                  text.hasSuffix("Z") else { return nil }
+            if element.tag == 0x17 {
+                // UTCTime: RFC 5280 maps YY < 50 to 20YY and the rest to 19YY.
+                guard let year = Int(text.prefix(2)) else { return nil }
+                text = (year < 50 ? "20" : "19") + text
+            } else if element.tag != 0x18 {
+                return nil
+            }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "UTC")
+            formatter.dateFormat = "yyyyMMddHHmmss'Z'"
+            return formatter.date(from: text)
+        }
+
+        return (date(times[0]), date(times[1]))
     }
 
     /// Reads validity bounds from a stored PEM certificate. This keeps records written

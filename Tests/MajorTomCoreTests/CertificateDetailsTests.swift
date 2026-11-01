@@ -39,6 +39,17 @@ final class CertificateDetailsTests: XCTestCase {
         XCTAssertEqual(dates.notAfter, formatter.date(from: "2036-07-29T18:40:12Z"))
     }
 
+    /// iOS lacks SecCertificateCopyValues and reads validity from the DER directly;
+    /// both readers must agree on the same certificate.
+    func testDERValidityDatesMatchSecurityFramework() throws {
+        let der = try fixture()
+        let parsed = CertificateDetails.derValidityDates(certificateDER: der)
+        let security = CertificateDetails.validityDates(certificateDER: der)
+        XCTAssertNotNil(parsed.notBefore)
+        XCTAssertEqual(parsed.notBefore, security.notBefore)
+        XCTAssertEqual(parsed.notAfter, security.notAfter)
+    }
+
     func testCertificateValidityDatesCanBeRecoveredFromStoredPEM() throws {
         let pem = CertificateDetails.pem(certificateDER: try fixture())
         let dates = CertificateDetails.validityDates(certificatePEM: pem)

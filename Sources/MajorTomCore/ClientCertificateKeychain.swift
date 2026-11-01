@@ -226,6 +226,7 @@ public struct ClientCertificateKeychain: Sendable {
     }
 
     public func identity(for id: UUID) throws -> ClientTLSIdentity {
+        #if os(macOS)
         let certificateDER = try certificateDER(for: id)
         guard let certificate = SecCertificateCreateWithData(nil, certificateDER as CFData) else {
             throw ClientCertificateKeychainError.identityUnavailable
@@ -248,6 +249,12 @@ public struct ClientCertificateKeychain: Sendable {
             }
             return ClientTLSIdentity(identity)
         }
+        #else
+        // ponytail: SecIdentityCreate is macOS-only, so iOS has no client identities yet.
+        // Upgrade path: store the certificate as kSecClassCertificate beside its key and
+        // query kSecClassIdentity, which pairs them on every platform.
+        throw ClientCertificateKeychainError.identityUnavailable
+        #endif
     }
 
     /// Resolves an identity by certificate fingerprint when CloudKit metadata and
@@ -312,6 +319,7 @@ public struct ClientCertificateKeychain: Sendable {
         ) as Data? {
             privateKeyPEM = Self.pem(label: "RSA PRIVATE KEY", data: privateKeyDER)
         } else {
+            #if os(macOS)
             // Keys in the pre-Data-Protection macOS Keychain are backed by the
             // legacy CDSA/CSSM provider. SecKeyCopyExternalRepresentation can reject
             // those keys with CSSMERR_CSP_INVALID_KEYATTR_MASK even when they were
@@ -342,6 +350,12 @@ public struct ClientCertificateKeychain: Sendable {
                 )
             }
             privateKeyPEM = pem.trimmingCharacters(in: .whitespacesAndNewlines)
+            #else
+            throw ClientCertificateKeychainError.privateKeyExport(
+                modernExportError?.takeRetainedValue().localizedDescription
+                    ?? "Keychain did not provide the private-key data."
+            )
+            #endif
         }
 
         return CertificateDetails.pem(certificateDER: certificateDER)
